@@ -258,7 +258,7 @@ class Client:
             except:
                 pass
 
-        task = asyncio.async(self._fatal_error(exc))
+        task = asyncio.ensure_future(self._fatal_error(exc))
         task.add_done_callback(handler)
 
     def _on_protocol_disconnect(self, exc):
@@ -580,7 +580,7 @@ class Client:
         self._protocol.send_packet(set_pkt)
 
     def _task_setup(self, task):
-        task = asyncio.async(
+        task = asyncio.ensure_future(
             task,
             loop=self._loop)
         task.add_done_callback(self._on_task_done)
@@ -602,7 +602,7 @@ class Client:
         logger = logging.getLogger(__name__ + ".update_task_impl")
         logger.debug("listening for push messages")
         futures = {}
-        interrupt_future = asyncio.async(
+        interrupt_future = asyncio.ensure_future(
             self._update_task_interrupt.wait(),
             loop=self._loop)
         try:
@@ -610,7 +610,7 @@ class Client:
                 for future in futures:
                     future.cancel()
                 futures = {
-                    asyncio.async(queue.get(), loop=self._loop): (
+                    asyncio.ensure_future(queue.get(), loop=self._loop): (
                         self._push_receivers[packet_type], cbs)
                     for packet_type, (queue, cbs) in self._push_callbacks.items()
                 }
@@ -624,7 +624,7 @@ class Client:
                 if interrupt_future in done:
                     done.remove(interrupt_future)
                     self._update_task_interrupt.clear()
-                    interrupt_future = asyncio.async(
+                    interrupt_future = asyncio.ensure_future(
                         self._update_task_interrupt.wait(),
                         loop=self._loop)
 
@@ -747,7 +747,7 @@ class Client:
         self._disconnected.clear()
 
     @asyncio.coroutine
-    def connect_tcp(self, host, port=3977, *, encoding="utf8"):
+    def connect_tcp(self, host, port=3977, encoding="utf8", **kwargs):
         """
         Automatically connect to the given *host* at the given *port* using
         TCP. The protocol is set to use the given *encoding*.
