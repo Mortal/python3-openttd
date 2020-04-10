@@ -111,11 +111,10 @@ class PacketProtocol(asyncio.Protocol):
     def _protocol_violation(self, msg):
         self._connection_error("Protocol violation: {}".format(msg))
 
-    @asyncio.coroutine
-    def _collector_task(self, eot_futures, data_futures,
-                        initial_timeout,
-                        subsequent_timeout,
-                        response_required):
+    async def _collector_task(self, eot_futures, data_futures,
+                              initial_timeout,
+                              subsequent_timeout,
+                              response_required):
         timeout = initial_timeout
         data_future_set = set(data_futures)
         eot_future_set = set(eot_futures)
@@ -125,7 +124,7 @@ class PacketProtocol(asyncio.Protocol):
             while True:
                 future_list = list(eot_futures) + list(data_futures)
                 logger.debug("collector_task: timeout=%f", timeout)
-                done, pending = yield from asyncio.wait(
+                done, pending = await asyncio.wait(
                     future_list,
                     timeout=timeout,
                     return_when=asyncio.FIRST_COMPLETED,
@@ -214,20 +213,19 @@ class PacketProtocol(asyncio.Protocol):
         self.packet_hooks.close_all(exc)
         self._close_transport()
 
-    @asyncio.coroutine
-    def _waiter_task(self, futures, timeout, critical_timeout):
+    async def _waiter_task(self, futures, timeout, critical_timeout):
         logger = logging.getLogger(__name__ + ".send_andor_wait_for")
         logger.debug("waiting for response...")
 
         if futures:
-            done, pending = yield from asyncio.wait(
+            done, pending = await asyncio.wait(
                 [f for _, f in futures],
                 timeout=timeout,
                 return_when=asyncio.FIRST_COMPLETED)
         else:
             done = set()
             pending = set()
-            yield from asyncio.sleep(timeout)
+            await asyncio.sleep(timeout)
 
         logger.debug("received response")
         logger.debug("done=%r", done)
@@ -367,8 +365,7 @@ class PacketProtocol(asyncio.Protocol):
         if not new_value:
             self._reinspect_buffered_packets()
 
-    @asyncio.coroutine
-    def close(self, exc=None):
+    async def close(self, exc=None):
         """
         Close the protocol, also closing the underlying transport.
 
@@ -387,7 +384,7 @@ class PacketProtocol(asyncio.Protocol):
             self._terminate(exc)
         else:
             self._close_transport()
-        yield from self._closed.wait()
+        await self._closed.wait()
 
     @property
     def encoding(self):
@@ -406,15 +403,15 @@ class PacketProtocol(asyncio.Protocol):
             type_,
             encoding=self._encoding)
 
-    @asyncio.coroutine
-    def send_andor_wait_for(
-            self,
-            packets_to_send,
-            types_to_wait_for,
-            queues_to_register={},
-            timeout=None,
-            buffer_unknown=None,
-            critical_timeout=True):
+    async def send_andor_wait_for(
+        self,
+        packets_to_send,
+        types_to_wait_for,
+        queues_to_register={},
+        timeout=None,
+        buffer_unknown=None,
+        critical_timeout=True,
+    ):
         """
         Send zero or more packets and wait for a response.
 
@@ -468,7 +465,7 @@ class PacketProtocol(asyncio.Protocol):
             self._reinspect_buffered_packets()
 
 
-            return (yield from self._waiter_task(
+            return (await self._waiter_task(
                 futures,
                 timeout,
                 critical_timeout))
@@ -476,14 +473,13 @@ class PacketProtocol(asyncio.Protocol):
             for type_, queue in queues_to_register.items():
                 self.packet_hooks.remove_queue(type_, queue)
 
-    @asyncio.coroutine
-    def send_and_collect_replies(self,
-                                 packets_to_send,
-                                 type_queues,
-                                 end_of_transmission_marker,
-                                 initial_timeout,
-                                 subsequent_timeout,
-                                 response_required=True):
+    async def send_and_collect_replies(self,
+                                       packets_to_send,
+                                       type_queues,
+                                       end_of_transmission_marker,
+                                       initial_timeout,
+                                       subsequent_timeout,
+                                       response_required=True):
         """
         Send zero or more packets and collect multiple responses.
 
@@ -549,7 +545,7 @@ class PacketProtocol(asyncio.Protocol):
 
             self._reinspect_buffered_packets()
 
-            return (yield from self._collector_task(
+            return (await self._collector_task(
                 eot_futures,
                 data_futures,
                 initial_timeout,

@@ -241,12 +241,11 @@ class Client:
         self._poll_locks = {}
         self._reset()
 
-    @asyncio.coroutine
-    def _fatal_error(self, exc):
+    async def _fatal_error(self, exc):
         if not self._disconnected.is_set():
             raise exc
         logger.fatal("%s: %s", type(exc).__name__, exc)
-        yield from self.disconnect(exc)
+        await self.disconnect(exc)
         if self.on_error:
             self._loop.call_soon(self.on_error, exc)
         raise exc
@@ -299,8 +298,7 @@ class Client:
             update_type = packet_to_update_type[packet_or_update_type]
         return update_type, packet_types
 
-    @asyncio.coroutine
-    def _ping_task_impl(self, interval):
+    async def _ping_task_impl(self, interval):
         ping_pkt = self._protocol.new_packet(packet.AdminPacketType.ADMIN_PING)
         offset, len_ = ping_pkt.pack_uint32(0) # placeholder
         end = offset+len_
@@ -310,7 +308,7 @@ class Client:
 
         logger.info("will ping in intervals of %s", interval)
         while True:
-            yield from asyncio.sleep(interval.total_seconds())
+            await asyncio.sleep(interval.total_seconds())
             if self._state == ClientState.DISCONNECTED:
                 return
             elif self._state == ClientState.CONNECTED:
@@ -321,7 +319,7 @@ class Client:
             ping_buffer[offset:end] = ctr.to_bytes(len_, 'little')
             try:
                 logger.debug("ping %d", ctr)
-                response = yield from self._protocol.send_andor_wait_for(
+                response = await self._protocol.send_andor_wait_for(
                     [
                         ping_pkt
                     ],
@@ -333,10 +331,9 @@ class Client:
                 logger.debug("pong %d", response.unpack_uint32())
             except TimeoutError as err:
                 logger.error("ping timeout!")
-                yield from self._fatal_error(err)
+                await self._fatal_error(err)
 
-    @asyncio.coroutine
-    def _poll_update(self, update_type, d1=None, nresponses=1):
+    async def _poll_update(self, update_type, d1=None, nresponses=1):
         poll_pkt = self._protocol.new_packet(packet.AdminPacketType.ADMIN_POLL)
         poll_pkt.pack_uint8(update_type.value)
         d1 = d1 or 0
@@ -358,10 +355,10 @@ class Client:
             lock = self._poll_locks.setdefault(response_packet_type,
                                                asyncio.Lock())
 
-        with (yield from lock):
+        with (await lock):
             logger.debug("requesting poll update for %r", response_packet_type)
             if nresponses == 1:
-                response = yield from self._send_andor_wait_for(
+                response = await self._send_andor_wait_for(
                     [
                         poll_pkt
                     ],
@@ -371,7 +368,7 @@ class Client:
 
                 return handler_func(response)
 
-            values, _ = yield from self._send_and_collect_replies(
+            values, _ = await self._send_and_collect_replies(
                 [
                     poll_pkt
                 ],
@@ -488,8 +485,8 @@ class Client:
         self._update_map = {}
         self._server_info = info.ServerInformation()
         self._disconnected.set()
-        self._task_teardown(self._ping_task)
-        self._task_teardown(self._update_task)
+        asyncio.ensure_future(self._task_teardown(self._ping_task))
+        asyncio.ensure_future(self._task_teardown(self._update_task))
         self._ping_task = None
         self._update_task = None
         self._push_callbacks = {}
@@ -497,20 +494,19 @@ class Client:
         self._update_task_interrupt.clear()
         self._rcon_lock = asyncio.Lock()
 
-    @asyncio.coroutine
-    def _send_and_collect_replies(self,
-                                  packets_to_send,
-                                  types_to_listen_for,
-                                  end_of_transmission_marker=[],
-                                  initial_timeout=None,
-                                  subsequent_timeout=None):
+    async def _send_and_collect_replies(self,
+                                        packets_to_send,
+                                        types_to_listen_for,
+                                        end_of_transmission_marker=[],
+                                        initial_timeout=None,
+                                        subsequent_timeout=None):
         queue = asyncio.Queue()
         queues_to_register = {
             type_: queue
             for type_ in types_to_listen_for
         }
 
-        response = yield from self._send_and_wait_for_replies(
+        response = await self._send_and_wait_for_replies(
             packets_to_send,
             queues_to_register,
             end_of_transmission_marker=end_of_transmission_marker,
@@ -523,17 +519,16 @@ class Client:
 
         return result_generator(), response
 
-    @asyncio.coroutine
-    def _send_and_wait_for_replies(self,
-                                   packets_to_send,
-                                   queues_to_register,
-                                   end_of_transmission_marker=[],
-                                   initial_timeout=None,
-                                   subsequent_timeout=None):
+    async def _send_and_wait_for_replies(self,
+                                         packets_to_send,
+                                         queues_to_register,
+                                         end_of_transmission_marker=[],
+                                         initial_timeout=None,
+                                         subsequent_timeout=None):
         try:
             initial_timeout = initial_timeout or self._default_timeout
             subsequent_timeout = subsequent_timeout or 0.1
-            return (yield from self._protocol.send_and_collect_replies(
+            return (await self._protocol.send_and_collect_replies(
                 packets_to_send,
                 queues_to_register,
                 end_of_transmission_marker,
@@ -542,8 +537,7 @@ class Client:
         except TimeoutError as err:
             return None
 
-    @asyncio.coroutine
-    def _send_andor_wait_for(self, *args, timeout=None, **kwargs):
+    async def _send_andor_wait_for(self, *args, timeout=None, **kwargs):
         """
         Forwards the request to the protocol, but (a) overrides the timeout if
         unset and (b) handles the TimeoutError by triggering a call to
@@ -551,13 +545,13 @@ class Client:
         """
         try:
             timeout = timeout or self._default_timeout
-            return (yield from self._protocol.send_andor_wait_for(
+            return (await self._protocol.send_andor_wait_for(
                 *args,
                 timeout=timeout,
                 critical_timeout=False,
                 **kwargs))
         except TimeoutError as err:
-            yield from self._fatal_error(err)
+            await self._fatal_error(err)
 
     def _set_update_frequency(self, update_type, frequency):
         self._require_authed()
@@ -586,19 +580,19 @@ class Client:
         task.add_done_callback(self._on_task_done)
         return task
 
-    @asyncio.coroutine
-    def _task_teardown(self, task):
+    async def _task_teardown(self, task):
+        if task is None:
+            return
         try:
             if task.cancel():
                 # wait for it to cancel
-                yield from task
+                await task
                 task.result()
             task.result()
         except asyncio.CancelledError:
             pass
 
-    @asyncio.coroutine
-    def _update_task_impl(self):
+    async def _update_task_impl(self):
         logger = logging.getLogger(__name__ + ".update_task_impl")
         logger.debug("listening for push messages")
         futures = {}
@@ -616,7 +610,7 @@ class Client:
                 }
 
                 logger.debug("futures=%r", futures)
-                done, pending = yield from asyncio.wait(
+                done, pending = await asyncio.wait(
                     list(futures) + [interrupt_future],
                     loop=self._loop,
                     return_when=asyncio.FIRST_COMPLETED)
@@ -643,8 +637,7 @@ class Client:
                 except asyncio.CancelledError:
                     pass
 
-    @asyncio.coroutine
-    def authenticate(self, password, client_name, client_version):
+    async def authenticate(self, password, client_name, client_version):
         """
         Authenticate with the server by sending a
         :attr:`~openttd.packet.AdminPacketType.ADMIN_JOIN` message with the
@@ -667,7 +660,7 @@ class Client:
         join_pkt.pack_string(client_version, limits.NETWORK_REVISION_LENGTH)
 
         try:
-            response = yield from self._protocol.send_andor_wait_for(
+            response = await self._protocol.send_andor_wait_for(
                 [
                     join_pkt
                 ],
@@ -686,7 +679,7 @@ class Client:
 
         if response.type_ != packet.AdminPacketType.SERVER_PROTOCOL:
             # FIXME: better error message
-            yield from self._fatal_error(
+            await self._fatal_error(
                 ConnectionError("Received negative response: {}".format(
                     response.type_)))
 
@@ -712,7 +705,7 @@ class Client:
             has_more = response.unpack_bool()
         del response
 
-        welcome = yield from self._protocol.send_andor_wait_for(
+        welcome = await self._protocol.send_andor_wait_for(
             [],
             [
                 packet.AdminPacketType.SERVER_WELCOME
@@ -731,8 +724,7 @@ class Client:
             self._update_task_impl()
         )
 
-    @asyncio.coroutine
-    def connect(self, protocol):
+    async def connect(self, protocol):
         """
         Connect the client using the given
         :class:`openttd.protocol.PacketProtocol` instance.
@@ -746,8 +738,7 @@ class Client:
         self._state = ClientState.CONNECTED
         self._disconnected.clear()
 
-    @asyncio.coroutine
-    def connect_tcp(self, host, port=3977, encoding="utf8", **kwargs):
+    async def connect_tcp(self, host, port=3977, *, encoding="utf8"):
         """
         Automatically connect to the given *host* at the given *port* using
         TCP. The protocol is set to use the given *encoding*.
@@ -755,22 +746,21 @@ class Client:
         Requires the client to be in :class:`~ClientState.DISCONNECTED` state.
         """
         self._require_disconnected()
-        _, protocol = yield from self._loop.create_connection(
+        _, protocol = await self._loop.create_connection(
             lambda: PacketProtocol(loop=self._loop,
                                    encoding=encoding),
             host=host,
             port=port)
 
-        yield from self.connect(protocol, **kwargs)
+        await self.connect(protocol)
 
-    @asyncio.coroutine
-    def disconnect(self, exc=None):
+    async def disconnect(self, exc=None):
         """
         Disconnect from the server, optionally with an exception *exc*.
         """
         self._require_connected_or_authed()
         self._disconnected.set()
-        yield from self._protocol.close(exc)
+        await self._protocol.close(exc)
         self._reset()
 
     @property
@@ -781,8 +771,7 @@ class Client:
         """
         return self._disconnected
 
-    @asyncio.coroutine
-    def poll_client_info(self, client_id):
+    async def poll_client_info(self, client_id):
         """
         Request :class:`~openttd.info.ClientInformation` for a specific
         *client_id*. Return :data:`None` if the client does not exist.
@@ -796,13 +785,12 @@ class Client:
         self._require_authed()
         if client_id < 0 or client_id is None:
             raise ValueError("poll_client_info requires one specific id")
-        return (yield from self._poll_update(
+        return (await self._poll_update(
             UpdateType.CLIENT_INFO,
             d1=client_id,
             nresponses="?"))
 
-    @asyncio.coroutine
-    def poll_client_infos(self):
+    async def poll_client_infos(self):
         """
         Request :class:`~openttd.info.ClientInformation` for all connected
         clients.
@@ -814,13 +802,12 @@ class Client:
 
         """
         self._require_authed()
-        return (yield from self._poll_update(
+        return (await self._poll_update(
             UpdateType.CLIENT_INFO,
             d1=-1,
             nresponses="*"))
 
-    @asyncio.coroutine
-    def poll_company_info(self, company_id):
+    async def poll_company_info(self, company_id):
         """
         Request :class:`~openttd.info.CompanyInformation` for a specific
         *company_id*. Return :data:`None` if the company does not exist.
@@ -834,13 +821,12 @@ class Client:
         self._require_authed()
         if company_id < 0 or company_id is None:
             raise ValueError("poll_company_info requires one specific id")
-        return (yield from self._poll_update(
+        return (await self._poll_update(
             UpdateType.COMPANY_INFO,
             d1=company_id,
             nresponses="?"))
 
-    @asyncio.coroutine
-    def poll_company_infos(self):
+    async def poll_company_infos(self):
         """
         Request :class:`~openttd.info.CompanyInformation` for all existing
         companies.
@@ -852,13 +838,12 @@ class Client:
 
         """
         self._require_authed()
-        return (yield from self._poll_update(
+        return (await self._poll_update(
             UpdateType.COMPANY_INFO,
             d1=-1,
             nresponses="*"))
 
-    @asyncio.coroutine
-    def poll_company_economies(self):
+    async def poll_company_economies(self):
         """
         Request :class:`~openttd.info.CompanyEconomy` for all existing
         companies.
@@ -875,13 +860,12 @@ class Client:
 
         """
         self._require_authed()
-        return (yield from self._poll_update(
+        return (await self._poll_update(
             UpdateType.COMPANY_ECONOMY,
             d1=-1,
             nresponses="*"))
 
-    @asyncio.coroutine
-    def poll_company_stats(self):
+    async def poll_company_stats(self):
         """
         Request :class:`~openttd.info.CompanyStats` for all existing
         companies.
@@ -898,13 +882,12 @@ class Client:
 
         """
         self._require_authed()
-        return (yield from self._poll_update(
+        return (await self._poll_update(
             UpdateType.COMPANY_STATS,
             d1=-1,
             nresponses="*"))
 
-    @asyncio.coroutine
-    def poll_date(self):
+    async def poll_date(self):
         """
         Request the current in-game date. Return an integer.
 
@@ -915,12 +898,11 @@ class Client:
 
         """
         self._require_authed()
-        return (yield from self._poll_update(
+        return (await self._poll_update(
             UpdateType.DATE,
             nresponses=1))
 
-    @asyncio.coroutine
-    def rcon_command(self, command):
+    async def rcon_command(self, command):
         """
         Execute the OpenTTD console *command* remotely. Return an iterable which
         yields tuples.
@@ -935,9 +917,9 @@ class Client:
         rcon_pkt.pack_string(command, limits.NETWORK_RCONCOMMAND_LENGTH)
 
         logger.debug("locking rcon lock")
-        with (yield from self._rcon_lock):
+        with (await self._rcon_lock):
             logger.debug("sending rcon: %r", command)
-            results, _ = (yield from self._send_and_collect_replies(
+            results, _ = (await self._send_and_collect_replies(
                 [
                     rcon_pkt
                 ],

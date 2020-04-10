@@ -31,18 +31,17 @@ def handle_client_info(info):
 def handle_company_info(info):
     print(info)
 
-@asyncio.coroutine
-def main(loop, hostname, port, password):
+async def main(loop, hostname, port, password):
     client = openttd.admin.Client(loop=loop)
     client.on_error = logger.error
     try:
-        yield from client.connect_tcp(hostname, port)
+        await client.connect_tcp(hostname, port)
     except OSError as err:
         print("failed to connect:", err, file=sys.stderr)
         return
 
     try:
-        yield from client.authenticate(
+        await client.authenticate(
             password,
             "python3-openttd test",
             "devel")
@@ -52,7 +51,7 @@ def main(loop, hostname, port, password):
 
     logger.info("Connected to server: %s", client.server_info.name)
 
-    yield from client.rcon_command("unpause")
+    await client.rcon_command("unpause")
 
     client.subscribe_callback_to_push(
         openttd.admin.UpdateType.CLIENT_INFO,
@@ -75,12 +74,12 @@ def main(loop, hostname, port, password):
     )
 
     try:
-        yield from asyncio.wait(
+        await asyncio.wait(
             [
                 client.disconnected_event.wait()
             ])
     except:
-        yield from client.disconnect()
+        await client.disconnect()
 
 if __name__ == "__main__":
     import argparse
